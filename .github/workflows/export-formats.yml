@@ -1,0 +1,101 @@
+
+name: Export GARbro formats
+
+on:
+  push:
+    tags:
+      - '**'
+
+permissions:
+  contents: read
+
+jobs:
+  export-formats:
+    name: Build SchemeTool and export Formats.json
+    runs-on: windows-2025
+
+    steps:
+      - name: Checkout tagged commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check that tag belongs to dev
+        id: branch-check
+        shell: pwsh
+        run: |
+          git fetch --no-tags origin '+refs/heads/dev:refs/remotes/origin/dev'
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not fetch dev branch."
+          }
+
+          git merge-base --is-ancestor "$env:GITHUB_SHA" "refs/remotes/origin/dev"
+          $result = $LASTEXITCODE
+
+          if ($result -eq 0) {
+            "is_dev_commit=true" >> $env:GITHUB_OUTPUT
+          }
+          elseif ($result -eq 1) {
+            "is_dev_commit=false" >> $env:GITHUB_OUTPUT
+            Write-Host "Commit is not part of dev. Skipping."
+          }
+          else {
+            throw "Could not verify commit ancestry."
+          }
+
+      - name: Set up MSBuild
+        if: steps.branch-check.outputs.is_dev_commit == 'true'
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Check .NET Framework 4.7.2 targeting pack
+        if: steps.branch-check.outputs.is_dev_commit == 'true'
+        shell: pwsh
+        run: |
+          $base = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+          $path = Join-Path $base 'Reference Assemblies\Microsoft\Framework\.NETFramework\v4.7.2'
+
+          if (-not (Test-Path $path)) {
+            throw ".NET Framework 4.7.2 targeting pack not found."
+          }
+
+      - name: Restore NuGet packages
+        if: steps.branch-check.outputs.is_dev_commit == 'true'
+        run: nuget restore .\GARbro.sln -NonInteractive
+
+      - name: Build SchemeTool
+        if: steps.branch-check.outputs.is_dev_commit == 'true'
+        run: >
+          msbuild .\SchemeTool\SchemeTool.csproj
+          /t:Build
+          /p:Configuration=Release
+          /p:Platform=AnyCPU
+          /m
+          /verbosity:minimal
+
+      - name: Export Formats.json
+        if: steps.branch-check.outputs.is_dev_commit == 'true'
+        shell: pwsh
+        working-directory: bin/Release
+        run: |
+          if (-not (Test-Path '.\GameData\Formats.dat')) {
+            throw 'Formats.dat not found.'
+          }
+
+          & '.\SchemeTool.exe'
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "SchemeTool failed with exit code $LASTEXITCODE."
+          }
+
+          if (-not (Test-Path '.\GameData\Formats.json')) {
+            throw 'Formats.json was not generated.'
+          }
+
+      - name: Upload Formats.json
+        if: steps.branch-check.outputs.is_dev_commit == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Formats-json-${{ github.run_number }}
+          path: bin/Release/GameData/Formats.json
+          if-no-files-found: error
+          retention-days: 30
