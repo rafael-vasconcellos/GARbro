@@ -91,11 +91,13 @@ jobs:
             throw 'Formats.json was not generated.'
           }
 
-      - name: Upload Formats.json
-        if: steps.branch-check.outputs.is_dev_commit == 'true'
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Formats-json-${{ github.run_number }}
-          path: bin/Release/GameData/Formats.json
+          name: GARbro-formats-${{ github.run_number }}
+          path: |
+            bin/Release/GameData/Formats.json
+            bin/Release/GameData/XP3-schemes.csv
+            bin/Release/GameData/XP3-parameters.csv
           if-no-files-found: error
           retention-days: 30
