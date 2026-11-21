@@ -97,7 +97,8 @@ jobs:
           name: GARbro-formats-${{ github.run_number }}
           path: |
             bin/Release/GameData/Formats.json
-            bin/Release/GameData/XP3-schemes.csv
-            bin/Release/GameData/XP3-parameters.csv
+            bin/Release/GameData/SchemeCatalog.csv
+            bin/Release/GameData/SchemeParameters.csv
+            bin/Release/GameData/GameMap.csv
           if-no-files-found: error
           retention-days: 30

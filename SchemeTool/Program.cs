@@ -6,10 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
-using System.Runtime.Remoting.Metadata.W3cXsd2001;
 using System.Text;
-using System.Threading.Tasks;
 
 namespace SchemeTool
 {
@@ -17,213 +14,165 @@ namespace SchemeTool
     {
         static void Main(string[] args)
         {
-            // Load database.
-            using (Stream stream = File.OpenRead(".\\GameData\\Formats.dat"))
-            {
+            using (Stream stream = File.OpenRead(@".\GameData\Formats.dat"))
                 GameRes.FormatCatalog.Instance.DeserializeScheme(stream);
-            }
 
-#if true
-            // Export the original JSON and two spreadsheet-friendly XP3 tables.
-            ExportXp3Tables();
-
-            using (Stream stream = File.Create(".\\GameData\\Formats.json"))
-            {
+            // Keep GARbro's complete native JSON export.
+            using (Stream stream = File.Create(@".\GameData\Formats.json"))
                 GameRes.FormatCatalog.Instance.SerializeSchemeJson(stream);
-            }
-            return;
-#endif
-            GameRes.Formats.KiriKiri.Xp3Opener format = GameRes.FormatCatalog.Instance.ArcFormats
-                .FirstOrDefault(a => a is GameRes.Formats.KiriKiri.Xp3Opener) as GameRes.Formats.KiriKiri.Xp3Opener;
 
-            if (format != null)
-            {
-                GameRes.Formats.KiriKiri.Xp3Scheme scheme = format.Scheme as GameRes.Formats.KiriKiri.Xp3Scheme;
-
-                // Add scheme information here.
-
-#if true
-                byte[] cb = File.ReadAllBytes(@"MEM_10014628_00001000.mem");
-                var cb2 = MemoryMarshal.Cast<byte, uint>(cb);
-                for (int i = 0; i < cb2.Length; i++)
-                    cb2[i] = ~cb2[i];
-                var cs = new GameRes.Formats.KiriKiri.CxScheme
-                {
-                    Mask = 0x000,
-                    Offset = 0x000,
-                    PrologOrder = new byte[] { 0, 1, 2 },
-                    OddBranchOrder = new byte[] { 0, 1, 2, 3, 4, 5 },
-                    EvenBranchOrder = new byte[] { 0, 1, 2, 3, 4, 5, 6, 7 },
-                    ControlBlock = cb2.ToArray()
-                };
-                var crypt = new GameRes.Formats.KiriKiri.HxCrypt(cs);
-                crypt.RandomType = 0;
-                crypt.FilterKey = 0x0000000000000000;
-                crypt.NamesFile = "HxNames.lst";
-                var keyA1 = SoapHexBinary.Parse("0000000000000000000000000000000000000000000000000000000000000000").Value;
-                var keyA2 = SoapHexBinary.Parse("00000000000000000000000000000000").Value;
-                var keyB1 = SoapHexBinary.Parse("0000000000000000000000000000000000000000000000000000000000000000").Value;
-                var keyB2 = SoapHexBinary.Parse("00000000000000000000000000000000").Value;
-                crypt.IndexKeyDict = new Dictionary<string, GameRes.Formats.KiriKiri.HxIndexKey>()
-                {
-                    { "data.xp3", new GameRes.Formats.KiriKiri.HxIndexKey { Key1 = keyA1, Key2 = keyA2 } },
-                    { "update.xp3", new GameRes.Formats.KiriKiri.HxIndexKey { Key1 = keyB1, Key2 = keyB2 } },
-                };
-#else
-                GameRes.Formats.KiriKiri.ICrypt crypt = new GameRes.Formats.KiriKiri.XorCrypt(0x00);
-#endif
-
-                // scheme.KnownSchemes.Add("game title", crypt);
-            }
-
-            var gameMap = typeof(GameRes.FormatCatalog).GetField("m_game_map", BindingFlags.Instance | BindingFlags.NonPublic)
-                .GetValue(GameRes.FormatCatalog.Instance) as Dictionary<string, string>;
-
-            if (gameMap != null)
-            {
-                // Add file name here.
-                // gameMap.Add("game.exe", "game title");
-            }
-
-            // Save database.
-            using (Stream stream = File.Create(".\\GameData\\Formats.dat"))
-            {
-                GameRes.FormatCatalog.Instance.SerializeScheme(stream);
-            }
+            // Export every registered resource scheme, not only KiriKiri XP3.
+            ExportAllSchemes();
+            ExportGameMap();
         }
 
-        private static void ExportXp3Tables()
+        private static void ExportAllSchemes()
         {
-            IDictionary<string, GameRes.Formats.KiriKiri.ICrypt> knownSchemes =
-                GameRes.Formats.KiriKiri.Xp3Opener.KnownSchemes;
-            ISet<string> noCryptTitles = GameRes.Formats.KiriKiri.Xp3Opener.NoCryptTitles;
+            string catalogPath = @".\GameData\SchemeCatalog.csv";
+            string parametersPath = @".\GameData\SchemeParameters.csv";
 
-            SortedSet<string> titles = new SortedSet<string>(StringComparer.Ordinal);
-            titles.UnionWith(knownSchemes.Keys);
-            titles.UnionWith(noCryptTitles);
-
-            string schemesPath = @".\GameData\XP3-schemes.csv";
-            string parametersPath = @".\GameData\XP3-parameters.csv";
-
-            using (StreamWriter schemes = new StreamWriter(schemesPath, false, new UTF8Encoding(true)))
+            using (StreamWriter catalog = new StreamWriter(catalogPath, false, new UTF8Encoding(true)))
             using (StreamWriter parameters = new StreamWriter(parametersPath, false, new UTF8Encoding(true)))
             {
-                WriteCsvRow(schemes,
-                    "title", "entry_kind", "algorithm", "in_known_schemes", "in_no_crypt_titles",
-                    "hash_after_crypt", "startup_tjs_not_encrypted", "obfuscated_index", "parameter_count");
-                WriteCsvRow(parameters, "title", "algorithm", "parameter", "value");
+                WriteCsvRow(catalog, "format_tag", "format_type", "scheme_type", "parameter_count");
+                WriteCsvRow(parameters, "format_tag", "format_type", "scheme_type", "parameter_path", "value_type", "value");
 
-                foreach (string title in titles)
+                foreach (GameRes.IResource format in GameRes.FormatCatalog.Instance.Formats
+                    .OrderBy(f => f.Tag, StringComparer.Ordinal))
                 {
-                    GameRes.Formats.KiriKiri.ICrypt crypt;
-                    bool hasKnownScheme = knownSchemes.TryGetValue(title, out crypt);
-                    bool isNoCryptTitle = noCryptTitles.Contains(title);
+                    GameRes.ResourceScheme scheme = format.Scheme;
+                    if (scheme == null)
+                        continue;
 
-                    if (!hasKnownScheme && isNoCryptTitle)
-                        crypt = new GameRes.Formats.KiriKiri.NoCrypt();
+                    SortedDictionary<string, ParameterValue> values = ReadObjectGraph(scheme);
+                    string formatTag = format.Tag ?? "";
+                    string formatType = format.GetType().FullName ?? format.GetType().Name;
+                    string schemeType = scheme.GetType().FullName ?? scheme.GetType().Name;
 
-                    string entryKind = hasKnownScheme && isNoCryptTitle
-                        ? "KnownSchemes+NoCryptTitles"
-                        : hasKnownScheme ? "KnownSchemes" : "NoCryptTitles";
-                    string algorithm = crypt == null ? "(null)" : crypt.GetType().Name;
-
-                    SortedDictionary<string, string> values = crypt == null
-                        ? new SortedDictionary<string, string>(StringComparer.Ordinal)
-                        : ReadCryptParameters(crypt);
-
-                    WriteCsvRow(schemes,
-                        title,
-                        entryKind,
-                        algorithm,
-                        hasKnownScheme ? "true" : "false",
-                        isNoCryptTitle ? "true" : "false",
-                        crypt == null ? "" : crypt.HashAfterCrypt.ToString().ToLowerInvariant(),
-                        crypt == null ? "" : crypt.StartupTjsNotEncrypted.ToString().ToLowerInvariant(),
-                        crypt == null ? "" : crypt.ObfuscatedIndex.ToString().ToLowerInvariant(),
+                    WriteCsvRow(catalog, formatTag, formatType, schemeType,
                         values.Count.ToString(CultureInfo.InvariantCulture));
 
-                    foreach (KeyValuePair<string, string> item in values)
+                    foreach (KeyValuePair<string, ParameterValue> item in values)
                     {
-                        WriteCsvRow(parameters, title, algorithm, item.Key, item.Value);
+                        WriteCsvRow(parameters, formatTag, formatType, schemeType,
+                            item.Key, item.Value.TypeName, item.Value.Value);
                     }
                 }
             }
 
-            Console.WriteLine("XP3 schemes exported: " + schemesPath);
-            Console.WriteLine("XP3 parameters exported: " + parametersPath);
+            Console.WriteLine("Exported: " + catalogPath);
+            Console.WriteLine("Exported: " + parametersPath);
         }
 
-        private static SortedDictionary<string, string> ReadCryptParameters(object crypt)
+        private static void ExportGameMap()
         {
-            SortedDictionary<string, string> result =
-                new SortedDictionary<string, string>(StringComparer.Ordinal);
+            string path = @".\GameData\GameMap.csv";
+            FieldInfo field = typeof(GameRes.FormatCatalog).GetField(
+                "m_game_map", BindingFlags.Instance | BindingFlags.NonPublic);
+            IDictionary<string, string> gameMap = field == null
+                ? null
+                : field.GetValue(GameRes.FormatCatalog.Instance) as IDictionary<string, string>;
+
+            using (StreamWriter writer = new StreamWriter(path, false, new UTF8Encoding(true)))
+            {
+                WriteCsvRow(writer, "executable_or_pattern", "game_title");
+                if (gameMap != null)
+                {
+                    foreach (KeyValuePair<string, string> item in gameMap.OrderBy(x => x.Key, StringComparer.Ordinal))
+                        WriteCsvRow(writer, item.Key, item.Value);
+                }
+            }
+
+            Console.WriteLine("Exported: " + path);
+        }
+
+        private sealed class ParameterValue
+        {
+            public string TypeName;
+            public string Value;
+
+            public ParameterValue(string typeName, string value)
+            {
+                TypeName = typeName;
+                Value = value;
+            }
+        }
+
+        private static SortedDictionary<string, ParameterValue> ReadObjectGraph(object root)
+        {
+            SortedDictionary<string, ParameterValue> result =
+                new SortedDictionary<string, ParameterValue>(StringComparer.Ordinal);
             HashSet<object> active = new HashSet<object>(new ReferenceEqualityComparer());
-            FlattenValue("", crypt, result, active, 0);
+            FlattenValue("", root, result, active, 0);
             return result;
         }
 
         private static void FlattenValue(
             string path,
             object value,
-            SortedDictionary<string, string> output,
+            SortedDictionary<string, ParameterValue> output,
             HashSet<object> active,
             int depth)
         {
             if (value == null)
             {
-                if (path.Length > 0)
-                    output[path] = "<null>";
+                AddValue(output, path, "null", "<null>");
                 return;
             }
 
             Type type = value.GetType();
+            string typeName = type.FullName ?? type.Name;
 
             if (value is byte[])
             {
-                output[path] = "hex:" + BitConverter.ToString((byte[])value).Replace("-", "");
+                AddValue(output, path, typeName,
+                    "hex:" + BitConverter.ToString((byte[])value).Replace("-", ""));
                 return;
             }
 
             if (IsScalar(type))
             {
-                if (path.Length > 0)
-                    output[path] = FormatScalar(value);
+                AddValue(output, path, typeName, FormatScalar(value));
                 return;
             }
 
-            if (depth >= 16)
+            if (depth >= 20)
             {
-                output[path] = "<maximum depth reached>";
+                AddValue(output, path, typeName, "<maximum depth reached>");
                 return;
             }
 
             bool trackReference = !type.IsValueType;
             if (trackReference && !active.Add(value))
             {
-                output[path] = "<circular reference>";
+                AddValue(output, path, typeName, "<circular reference>");
                 return;
             }
 
             try
             {
+                // Record the concrete type of nested objects too (e.g. YpfScheme inside
+                // YuRisScheme.KnownSchemes[game title]).
+                if (path.Length > 0)
+                    AddValue(output, path, typeName, "<object>");
+
                 IDictionary dictionary = value as IDictionary;
                 if (dictionary != null)
                 {
-                    if (dictionary.Count == 0 && path.Length > 0)
-                        output[path] = "{}";
-
                     int count = 0;
                     foreach (DictionaryEntry entry in dictionary)
                     {
-                        if (count++ >= 4096)
+                        if (count++ >= 10000)
                         {
-                            output[JoinPath(path, "...")] = "<truncated after 4096 entries>";
+                            AddValue(output, JoinPath(path, "[...]"), "limit", "<truncated after 10000 entries>");
                             break;
                         }
-
                         string key = EscapePathSegment(FormatScalar(entry.Key));
-                        FlattenValue(JoinPath(path, "[" + key + "]"), entry.Value, output, active, depth + 1);
+                        FlattenValue(JoinPath(path, "[" + key + "]"), entry.Value,
+                            output, active, depth + 1);
                     }
+                    if (dictionary.Count == 0 && path.Length > 0)
+                        AddValue(output, path, typeName, "{}");
                     return;
                 }
 
@@ -233,9 +182,9 @@ namespace SchemeTool
                     int index = 0;
                     foreach (object item in enumerable)
                     {
-                        if (index >= 4096)
+                        if (index >= 10000)
                         {
-                            output[JoinPath(path, "[...]")] = "<truncated after 4096 items>";
+                            AddValue(output, JoinPath(path, "[...]"), "limit", "<truncated after 10000 items>");
                             break;
                         }
                         FlattenValue(JoinPath(path, "[" + index.ToString(CultureInfo.InvariantCulture) + "]"),
@@ -243,15 +192,14 @@ namespace SchemeTool
                         index++;
                     }
                     if (index == 0 && path.Length > 0)
-                        output[path] = "[]";
+                        AddValue(output, path, typeName, "[]");
                     return;
                 }
 
-                // Avoid traversing framework internals (Lazy<T>, streams, reflection objects, etc.).
+                // Avoid traversing implementation details of framework objects.
                 if (type.Namespace != null && type.Namespace.StartsWith("System", StringComparison.Ordinal))
                 {
-                    if (path.Length > 0)
-                        output[path] = SafeToString(value);
+                    AddValue(output, path, typeName, SafeToString(value));
                     return;
                 }
 
@@ -259,8 +207,7 @@ namespace SchemeTool
             }
             catch (Exception ex)
             {
-                if (path.Length > 0)
-                    output[path] = "<error: " + ex.GetType().Name + ">";
+                AddValue(output, path, typeName, "<error: " + ex.GetType().Name + ">");
             }
             finally
             {
@@ -272,15 +219,13 @@ namespace SchemeTool
         private static void FlattenObjectMembers(
             object instance,
             string path,
-            SortedDictionary<string, string> output,
+            SortedDictionary<string, ParameterValue> output,
             HashSet<object> active,
             int depth)
         {
             Type current = instance.GetType();
             bool foundMember = false;
 
-            // Include private fields as well as fields declared by base classes. This is where
-            // many algorithm-specific constants and key arrays are stored.
             while (current != null && current != typeof(object))
             {
                 FieldInfo[] fields = current.GetFields(
@@ -291,10 +236,9 @@ namespace SchemeTool
                     if (field.IsStatic || field.IsNotSerialized || field.Name.StartsWith("<", StringComparison.Ordinal))
                         continue;
 
-                    string memberName = field.Name;
-                    string memberPath = JoinPath(path, memberName);
+                    string memberPath = JoinPath(path, field.Name);
                     if (output.ContainsKey(memberPath))
-                        memberPath = JoinPath(path, current.Name + "." + memberName);
+                        memberPath = JoinPath(path, current.Name + "." + field.Name);
 
                     try
                     {
@@ -302,16 +246,14 @@ namespace SchemeTool
                     }
                     catch (Exception ex)
                     {
-                        output[memberPath] = "<error: " + ex.GetType().Name + ">";
+                        AddValue(output, memberPath, field.FieldType.FullName,
+                            "<error: " + ex.GetType().Name + ">");
                     }
                     foundMember = true;
                 }
 
-                // Include readable public properties (for example HashAfterCrypt and settings
-                // exposed through properties instead of fields).
                 PropertyInfo[] properties = current.GetProperties(
                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly);
-
                 foreach (PropertyInfo property in properties.OrderBy(p => p.Name, StringComparer.Ordinal))
                 {
                     MethodInfo getter = property.GetGetMethod();
@@ -328,7 +270,8 @@ namespace SchemeTool
                     }
                     catch (Exception ex)
                     {
-                        output[memberPath] = "<error: " + ex.GetType().Name + ">";
+                        AddValue(output, memberPath, property.PropertyType.FullName,
+                            "<error: " + ex.GetType().Name + ">");
                     }
                     foundMember = true;
                 }
@@ -337,7 +280,19 @@ namespace SchemeTool
             }
 
             if (!foundMember && path.Length > 0)
-                output[path] = SafeToString(instance);
+                AddValue(output, path, instance.GetType().FullName, SafeToString(instance));
+        }
+
+        private static void AddValue(
+            SortedDictionary<string, ParameterValue> output,
+            string path,
+            string typeName,
+            string value)
+        {
+            if (String.IsNullOrEmpty(path))
+                path = "$";
+            if (!output.ContainsKey(path))
+                output[path] = new ParameterValue(typeName ?? "", value ?? "");
         }
 
         private static bool IsScalar(Type type)
@@ -351,13 +306,8 @@ namespace SchemeTool
         {
             if (value == null)
                 return "<null>";
-
-            Type type = value.GetType();
-            if (type == typeof(Uri))
-                return ((Uri)value).ToString();
-            if (type == typeof(Type))
+            if (value is Type)
                 return ((Type)value).FullName;
-
             IFormattable formattable = value as IFormattable;
             return formattable != null
                 ? formattable.ToString(null, CultureInfo.InvariantCulture)
@@ -381,7 +331,7 @@ namespace SchemeTool
 
         private static string EscapePathSegment(string value)
         {
-            return value.Replace("\\", "\\\\").Replace("]", "\\]");
+            return (value ?? "<null>").Replace("\\", "\\\\").Replace("]", "\\]");
         }
 
         private static void WriteCsvRow(TextWriter writer, params string[] values)
@@ -393,26 +343,17 @@ namespace SchemeTool
         {
             if (value == null)
                 return "";
-
             bool quote = value.IndexOfAny(new char[] { ',', '"', '\r', '\n' }) >= 0 ||
                 value.StartsWith(" ", StringComparison.Ordinal) ||
                 value.EndsWith(" ", StringComparison.Ordinal);
-
             string escaped = value.Replace("\"", "\"\"");
             return quote ? "\"" + escaped + "\"" : escaped;
         }
 
         private sealed class ReferenceEqualityComparer : IEqualityComparer<object>
         {
-            public new bool Equals(object x, object y)
-            {
-                return Object.ReferenceEquals(x, y);
-            }
-
-            public int GetHashCode(object obj)
-            {
-                return RuntimeHelpers.GetHashCode(obj);
-            }
+            public new bool Equals(object x, object y) { return Object.ReferenceEquals(x, y); }
+            public int GetHashCode(object obj) { return RuntimeHelpers.GetHashCode(obj); }
         }
     }
 }
